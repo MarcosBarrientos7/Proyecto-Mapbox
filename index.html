@@ -7,6 +7,11 @@
     
     <script src='https://api.mapbox.com/mapbox-gl-js/v2.14.1/mapbox-gl.js'></script>
     <link href='https://api.mapbox.com/mapbox-gl-js/v2.14.1/mapbox-gl.css' rel='stylesheet' />
+    
+    <script src='https://api.mapbox.com/mapbox-gl-js/plugins/mapbox-gl-draw/v1.4.0/mapbox-gl-draw.js'></script>
+    <link href='https://api.mapbox.com/mapbox-gl-js/plugins/mapbox-gl-draw/v1.4.0/mapbox-gl-draw.css' rel='stylesheet' />
+    
+    <script src='https://unpkg.com/@turf/turf@6/turf.min.js'></script>
 
     <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
     <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
@@ -16,14 +21,13 @@
             margin: 0; 
             padding: 0; 
             display: flex; 
-            flex-direction: row; /* Horizontal en PC */
+            flex-direction: row; 
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
             height: 100vh; 
             background: #1a1a1a;
         }
-
-        #mapa { width: 75%; height: 100%; }
-
+        #mapa-contenedor { position: relative; width: 75%; height: 100%; }
+        #mapa { width: 100%; height: 100%; }
         #panel { 
             width: 25%; 
             padding: 20px; 
@@ -34,9 +38,7 @@
             display: flex;
             flex-direction: column;
         }
-
         h2 { color: #007bff; margin-top: 0; font-size: 1.5rem; }
-
         .dato-caja { 
             background: #2c2c2c; 
             padding: 12px; 
@@ -44,33 +46,88 @@
             margin-bottom: 10px; 
             border-left: 4px solid #007bff; 
         }
-
         .dato-caja strong { color: #007bff; display: block; font-size: 0.8rem; text-transform: uppercase; }
         .dato-caja span { font-size: 1.1rem; font-family: monospace; }
+        
+        .dentro { border-left: 4px solid #28a745; }
+        .dentro strong { color: #28a745; }
+        .fuera { border-left: 4px solid #dc3545; animation: parpadeo 1s infinite; }
+        .fuera strong { color: #dc3545; }
+        .espera { border-left: 4px solid #ffc107; }
+        .espera strong { color: #ffc107; }
 
-        /* MODO CELULAR (Media Query) */
+        #instruccion {
+            position: absolute;
+            top: 15px;
+            left: 15px;
+            z-index: 20;
+            padding: 10px 15px;
+            background: rgba(0, 123, 255, 0.9);
+            color: white;
+            border-radius: 6px;
+            font-weight: bold;
+            font-size: 0.9rem;
+            pointer-events: none;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+        }
+
+        /* Botón de Confirmación Flotante */
+        #btnConfirmar {
+            position: absolute;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 20;
+            padding: 12px 25px;
+            background: #28a745;
+            color: white;
+            border: none;
+            border-radius: 30px;
+            font-size: 1rem;
+            font-weight: bold;
+            cursor: pointer;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+            display: none; /* Se activa dinámicamente con JS */
+            transition: background 0.2s, transform 0.1s;
+        }
+        #btnConfirmar:hover { background: #218838; }
+        #btnConfirmar:active { transform: translateX(-50%) scale(0.95); }
+
+        @keyframes parpadeo {
+            0% { opacity: 1; }
+            50% { opacity: 0.5; }
+            100% { opacity: 1; }
+        }
+
         @media (max-width: 768px) {
-            body { flex-direction: column; } /* Vertical en Celular */
-            #mapa { width: 100%; height: 60%; } /* Mapa arriba */
-            #panel { 
-                width: 100%; 
-                height: 40%; 
-                box-sizing: border-box; 
-                box-shadow: 0 -2px 10px rgba(0,0,0,0.5);
-            }
+            body { flex-direction: column; } 
+            #mapa-contenedor { width: 100%; height: 60%; } 
+            #panel { width: 100%; height: 40%; box-sizing: border-box; }
             h2 { font-size: 1.2rem; }
             .dato-caja { padding: 8px; margin-bottom: 5px; }
+            #btnConfirmar { bottom: 15px; padding: 8px 18px; font-size: 0.85rem; }
         }
     </style>
 </head>
 <body>
 
-    <div id="mapa"></div>
+    <div id="mapa-contenedor">
+        <div id="instruccion">📐 Traza tu polígono y presiona confirmar</div>
+        <button id="btnConfirmar">✓ Confirmar Geocerca</button>
+        <div id="mapa"></div>
+    </div>
+    
     <div id="panel">
         <h2>Localización</h2>
-        <div class="dato-caja"><strong>Latitud</strong> <span id="lat">Cargando...</span></div>
-        <div class="dato-caja"><strong>Longitud</strong> <span id="lng">Cargando...</span></div>
+        <div class="dato-caja"><strong>Latitud Celular</strong> <span id="lat">Cargando...</span></div>
+        <div class="dato-caja"><strong>Longitud Celular</strong> <span id="lng">Cargando...</span></div>
         <div class="dato-caja"><strong>Última Conexión</strong> <span id="hora">--:--:--</span></div>
+        
+        <div id="cajaGeocerca" class="dato-caja dentro">
+            <strong>Estado de Zona</strong> 
+            <span id="estadoTexto">Sin geocerca activa</span>
+        </div>
+
         <div style="margin-top: auto; opacity: 0.5;">
             <p><small>ID Proyecto: mapbox-83ef8</small></p>
         </div>
@@ -92,30 +149,108 @@
 
         mapboxgl.accessToken = 'pk.eyJ1IjoibHVjYXJpb3hkIiwiYSI6ImNtbTg2eGJkODBlejQycHE5bXlqeDF5d28ifQ.30H_bVMK1cvc-PA6DOZrDQ';
         
+        let ultimaLatCelular = -16.533511;
+        let ultimaLonCelular = -68.151969;
+        let geocercaConfirmada = false;
+
         const map = new mapboxgl.Map({
             container: 'mapa',
-            style: 'mapbox://styles/mapbox/dark-v10', // Estilo oscuro para combinar con el panel
-            center: [-68.1193, -16.5000],
+            style: 'mapbox://styles/mapbox/dark-v10', 
+            center: [ultimaLonCelular, ultimaLatCelular],
             zoom: 14
         });
 
-        const marker = new mapboxgl.Marker({ color: '#007bff' }) // Marcador azul profesional
-            .setLngLat([-68.1193, -16.5000])
+        const markerCelular = new mapboxgl.Marker({ color: '#dc3545' }) 
+            .setLngLat([ultimaLonCelular, ultimaLatCelular])
             .addTo(map);
 
+        const draw = new MapboxDraw({
+            displayControlsDefault: false,
+            controls: {
+                polygon: true, 
+                trash: true    
+            },
+            defaultMode: 'simple_select'
+        });
+        map.addControl(draw, 'top-right');
+
+        function verificarEstadoGeocerca() {
+            const dataGeojson = draw.getAll();
+            const caja = document.getElementById('cajaGeocerca');
+            const texto = document.getElementById('estadoTexto');
+            const btn = document.getElementById('btnConfirmar');
+
+            if (dataGeojson.features.length > 0) {
+                if (!geocercaConfirmada) {
+                    caja.className = "dato-caja espera";
+                    texto.innerText = "Configurando zona...";
+                    return;
+                }
+
+                const poligonoDibujado = dataGeojson.features[0];
+                const puntoCelular = turf.point([ultimaLonCelular, ultimaLatCelular]);
+                const estaDentro = turf.booleanPointInPolygon(puntoCelular, poligonoDibujado);
+
+                if (estaDentro) {
+                    caja.className = "dato-caja dentro";
+                    texto.innerText = "ZONA SEGURA";
+                } else {
+                    caja.className = "dato-caja fuera";
+                    texto.innerText = "¡FUERA DE RANGO!";
+                }
+            } else {
+                geocercaConfirmada = false;
+                btn.style.display = "none";
+                caja.className = "dato-caja dentro";
+                texto.innerText = "Sin geocerca activa";
+            }
+        }
+
+        // Al presionar el botón de confirmar, forzamos el cierre del dibujo y evaluamos
+        document.getElementById('btnConfirmar').addEventListener('click', function() {
+            // Si el usuario presiona confirmar mientras aún está dibujando (puntos abiertos)
+            if (draw.getMode() === 'draw_polygon') {
+                draw.changeMode('simple_select'); // Esto fuerza el cierre automático del polígono
+            }
+            geocercaConfirmada = true;
+            this.style.display = "none"; 
+            verificarEstadoGeocerca(); 
+        });
+
+        // 💥 AQUÍ ESTÁ EL TRUCO: Detectar en cuanto el usuario activa la herramienta de dibujo
+        map.on('draw.modechange', (e) => {
+            const btn = document.getElementById('btnConfirmar');
+            if (e.mode === 'draw_polygon') {
+                geocercaConfirmada = false; // Nueva edición en proceso
+                btn.style.display = "block"; // ¡Muestra el botón verde desde el primer clic!
+                verificarEstadoGeocerca();
+            }
+        });
+
+        map.on('draw.create', verificarEstadoGeocerca);
+        
+        map.on('draw.update', () => {
+            // Si mueven un punto después de haber confirmado, vuelve a salir el botón para re-confirmar
+            geocercaConfirmada = false;
+            document.getElementById('btnConfirmar').style.display = "block";
+            verificarEstadoGeocerca();
+        });
+        
+        map.on('draw.delete', verificarEstadoGeocerca);
+
+        // ESCUCHA FIREBASE
         db.ref('ubicacion').on('value', (snapshot) => {
             const data = snapshot.val();
             if (data) {
-                document.getElementById('lat').innerText = data.latitud.toFixed(6);
-                document.getElementById('lng').innerText = data.longitud.toFixed(6);
+                ultimaLatCelular = data.latitud;
+                ultimaLonCelular = data.longitud;
+
+                document.getElementById('lat').innerText = ultimaLatCelular.toFixed(6);
+                document.getElementById('lng').innerText = ultimaLonCelular.toFixed(6);
                 document.getElementById('hora').innerText = data.tiempo;
 
-                marker.setLngLat([data.longitud, data.latitud]);
-                map.flyTo({ 
-                    center: [data.longitud, data.latitud],
-                    essential: true,
-                    zoom: 15 
-                });
+                markerCelular.setLngLat([ultimaLonCelular, ultimaLatCelular]);
+                verificarEstadoGeocerca();
             }
         });
     </script>
