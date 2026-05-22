@@ -71,7 +71,6 @@
             box-shadow: 0 4px 10px rgba(0,0,0,0.3);
         }
 
-        /* Botón de Confirmación Flotante */
         #btnConfirmar {
             position: absolute;
             bottom: 30px;
@@ -87,7 +86,7 @@
             font-weight: bold;
             cursor: pointer;
             box-shadow: 0 4px 15px rgba(0,0,0,0.5);
-            display: none; /* Se activa dinámicamente con JS */
+            display: none; 
             transition: background 0.2s, transform 0.1s;
         }
         #btnConfirmar:hover { background: #218838; }
@@ -112,8 +111,8 @@
 <body>
 
     <div id="mapa-contenedor">
-        <div id="instruccion">📐 Traza tu polígono y presiona confirmar</div>
-        <button id="btnConfirmar">✓ Confirmar Geocerca</button>
+        <div id="instruccion">📐 Traza tus polígonos y presiona confirmar</div>
+        <button id="btnConfirmar">✓ Confirmar Cambios</button>
         <div id="mapa"></div>
     </div>
     
@@ -174,6 +173,7 @@
         });
         map.addControl(draw, 'top-right');
 
+        // Función matemática adaptada para iterar sobre MÚLTIPLES polígonos concurrentes
         function verificarEstadoGeocerca() {
             const dataGeojson = draw.getAll();
             const caja = document.getElementById('cajaGeocerca');
@@ -187,11 +187,19 @@
                     return;
                 }
 
-                const poligonoDibujado = dataGeojson.features[0];
                 const puntoCelular = turf.point([ultimaLonCelular, ultimaLatCelular]);
-                const estaDentro = turf.booleanPointInPolygon(puntoCelular, poligonoDibujado);
+                let dispositivoSeguro = false;
 
-                if (estaDentro) {
+                // Evaluamos uno por uno si el celular está dentro de AL MENOS uno de los polígonos activos
+                for (let i = 0; i < dataGeojson.features.length; i++) {
+                    const poligono = dataGeojson.features[i];
+                    if (turf.booleanPointInPolygon(puntoCelular, poligono)) {
+                        dispositivoSeguro = true;
+                        break; // Con entrar a uno basta para estar seguro
+                    }
+                }
+
+                if (dispositivoSeguro) {
                     caja.className = "dato-caja dentro";
                     texto.innerText = "ZONA SEGURA";
                 } else {
@@ -206,23 +214,70 @@
             }
         }
 
-        // Al presionar el botón de confirmar, forzamos el cierre del dibujo y evaluamos
+        // Sincroniza la colección entera actual a Firebase y al LocalStorage
+        function guardarEstadoActual() {
+            const dataGeojson = draw.getAll();
+            if (dataGeojson.features.length > 0) {
+                const geoJsonStr = JSON.stringify(dataGeojson);
+                localStorage.setItem('geocerca_backup', geoJsonStr);
+
+                db.ref('geocerca').set({
+                    geoJsonStr: geoJsonStr
+                }, (error) => {
+                    if (error) console.log("Error al sincronizar: ", error);
+                });
+            } else {
+                // Si la última figura fue borrada, se limpia la nube por completo de forma controlada
+                localStorage.removeItem('geocerca_backup');
+                db.ref('geocerca').remove();
+            }
+        }
+
         document.getElementById('btnConfirmar').addEventListener('click', function() {
-            // Si el usuario presiona confirmar mientras aún está dibujando (puntos abiertos)
             if (draw.getMode() === 'draw_polygon') {
-                draw.changeMode('simple_select'); // Esto fuerza el cierre automático del polígono
+                draw.changeMode('simple_select'); 
             }
             geocercaConfirmada = true;
             this.style.display = "none"; 
+            
+            guardarEstadoActual();
             verificarEstadoGeocerca(); 
         });
 
-        // 💥 AQUÍ ESTÁ EL TRUCO: Detectar en cuanto el usuario activa la herramienta de dibujo
+        map.on('load', () => {
+            const backup = localStorage.getItem('geocerca_backup');
+            if (backup) {
+                const geojson = JSON.parse(backup);
+                draw.add(geojson);
+                geocercaConfirmada = true;
+                verificarEstadoGeocerca();
+            }
+
+            db.ref('geocerca').on('value', (snapshot) => {
+                const data = snapshot.val();
+                if (data && data.geoJsonStr) {
+                    if (data.geoJsonStr !== localStorage.getItem('geocerca_backup')) {
+                        localStorage.setItem('geocerca_backup', data.geoJsonStr);
+                        draw.deleteAll();
+                        draw.add(JSON.parse(data.geoJsonStr));
+                        geocercaConfirmada = true;
+                        verificarEstadoGeocerca();
+                    }
+                }
+            });
+        });
+
+        // 💥 SOLUCIÓN AL BORRADO COMPARTIDO: En lugar de demoler el nodo, actualiza Firebase con los polígonos que sobrevivieron
+        map.on('draw.delete', () => {
+            guardarEstadoActual();
+            verificarEstadoGeocerca();
+        });
+
         map.on('draw.modechange', (e) => {
             const btn = document.getElementById('btnConfirmar');
             if (e.mode === 'draw_polygon') {
-                geocercaConfirmada = false; // Nueva edición en proceso
-                btn.style.display = "block"; // ¡Muestra el botón verde desde el primer clic!
+                geocercaConfirmada = false; 
+                btn.style.display = "block"; 
                 verificarEstadoGeocerca();
             }
         });
@@ -230,15 +285,11 @@
         map.on('draw.create', verificarEstadoGeocerca);
         
         map.on('draw.update', () => {
-            // Si mueven un punto después de haber confirmado, vuelve a salir el botón para re-confirmar
             geocercaConfirmada = false;
             document.getElementById('btnConfirmar').style.display = "block";
             verificarEstadoGeocerca();
         });
-        
-        map.on('draw.delete', verificarEstadoGeocerca);
 
-        // ESCUCHA FIREBASE
         db.ref('ubicacion').on('value', (snapshot) => {
             const data = snapshot.val();
             if (data) {
